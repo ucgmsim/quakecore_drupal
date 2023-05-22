@@ -1,0 +1,9 @@
+my_module.publication_list:
+  title: 'Publication List'
+  description: 'List of all publications sorted by publication id'
+  parent: system.admin_content
+  route_name: my_module.publication_list
+  weight: 100
+  menu_name: admin
+  requirements:
+    _role: 'administrator'

@@ -1,0 +1,262 @@
+<?php
+
+use Drupal\Core\Entity\EntityInterface;
+use Drupal\Core\Session\AccountInterface;
+use Drupal\node\NodeInterface;
+use Drupal\Core\Mail\Plugin\Mail\PhpMail;
+use Drupal\Core\Render\Markup;
+use Drupal\Core\Link;
+use Drupal\Core\Url;
+
+/**
+ * Implements hook_ENTITY_TYPE_create() for node entities.
+ */
+function my_module_node_create(EntityInterface $entity) {
+  // Only act on 'Publication' content type.
+  if ($entity->bundle() === 'publication') {
+    // Set the first value of 'field_corresponding_authors' to the current user's ID if the user is not an admin.
+    $user = \Drupal::currentUser();
+    if (!$user->hasPermission('administer users')) {
+      $corresponding_authors = $entity->get('field_corresponding_authors')->getValue();
+      if (empty($corresponding_authors)) {
+        $entity->set('field_corresponding_authors', [['target_id' => $user->id()]]);
+      }
+    }
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function my_module_form_node_publication_form_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id) {
+  // Add a custom validation callback to the publication form.
+  $form['#validate'][] = 'my_module_publication_form_validate';
+}
+
+/**
+ * Custom validation callback for the publication form.
+ */
+function my_module_publication_form_validate($form, \Drupal\Core\Form\FormStateInterface $form_state) {
+  $title = $form_state->getValue('title')[0]['value'];
+  
+  // Check if a publication with a similar title already exists.
+  $query = \Drupal::entityQuery('node')
+    ->condition('type', 'publication')
+    ->condition('title', '%'.$title.'%', 'LIKE');
+  $existing_publication_ids = $query->execute();
+
+  // If there are existing publications with similar titles, display a message.
+  if (!empty($existing_publication_ids)) {
+    $existing_publication_links = [];
+    foreach ($existing_publication_ids as $existing_publication_id) {
+      $existing_publication = \Drupal\node\Entity\Node::load($existing_publication_id);
+      $existing_publication_title = $existing_publication->getTitle();
+      $url = Url::fromRoute('entity.node.edit_form', ['node' => $existing_publication_id]);
+      $existing_publication_link = Link::fromTextAndUrl(t('@title (ID: @id)', ['@title' => $existing_publication_title, '@id' => $existing_publication_id]), $url);
+      $existing_publication_links[] = $existing_publication_link->toString();
+    }
+    $existing_publication_list = Markup::create('<ul><li>' . implode('</li><li>', $existing_publication_links) . '</li></ul>');
+    $message = t('Publications with similar titles already exist. You may want to edit the following existing publications instead of creating a new one: @publications', ['@publications' => $existing_publication_list]);
+
+    // Set a form error to display the message to the user.
+    $form_state->setErrorByName('title', $message);
+
+  }
+}
+
+
+function my_module_entity_insert(EntityInterface $entity) {
+  // Only act on 'Publication' content type.
+  if ($entity->bundle() === 'publication') {
+    $pid = $entity->id();
+    $message = t('Your Publication ID is %pid. A confirmation email will be sent shortly.', ['%pid' => $pid]);
+    \Drupal::messenger()->addMessage($message);
+
+    // Copy the entity ID to the 'field_publication_id' field.
+    $entity->set('field_publication_id', $entity->id());
+    $entity->save();
+    
+    $authors = $entity->get('field_corresponding_authors')->referencedEntities();
+    $recipients = [];
+    $author_names = [];
+    foreach ($authors as $author) {
+	    $recipients[] = $author->getEmail();
+	    $author_names[] = $author->label();
+    }
+    $author_names_str = implode(", ",$author_names);
+
+    $title = $entity->getTitle();
+
+    $subject = "New Publication Added to QuakeCoRE portal (id: $pid)";
+    $body = array();
+    $greeting="Dear $author_names[0]";
+    if (count($authors)>1) {
+	    $greeting.=" (Co-author(s): ";
+	    for ($i=1; $i<count($authors);$i++) {
+		    $greeting.=$author_names[$i];
+		    if ($i<count($authors)-1) $greeting.=", ";
+	    }
+	    $greeting.="),";
+    }
+    else $greeting.=",";
+
+    $body[] = $greeting;
+    $body[] ="";
+    $body[] ="Thank you for submitting a publication to the Te Hiranga Rū QuakeCoRE Portal";
+    $body[] ="";
+    $body[] ="Your QuakeCoRE publication number for your submission entitled";
+    $body[] ="\"$title\" (by $author_names_str)";
+    $body[] ="is $pid.";
+    $body[] ="";
+    $body[] ="Please add the following statement in your acknowledgement;";
+    $body[] ="";
+    $body[] ="This project was (partially) supported by Te Hiranga Rū QuakeCoRE, an Aotearoa New Zealand Tertiary Education Commission-funded Centre.";
+    $body[] ="This is QuakeCoRE publication number $pid.";
+    $body[] ="";
+    $body[] ="Ngā mihi,";
+    $body[] ="Te Hiranga Rū QuakeCoRE Team";
+    $body[] ="quakecore@canterbury.ac.nz";
+
+    // Send the email to multiple recipients
+    $to = $recipients[0];
+    unset($recipients[0]);
+
+    $params= [
+          'subject' => $subject,
+          'body' => $body,
+    ];
+
+    foreach ($recipients as $recipient) {
+      $params['Cc'][] = $recipient;
+    }
+
+   // Send the email
+   \Drupal::service('plugin.manager.mail')->mail(
+        'my_module',
+        'new_publication',
+        $to,
+	'en',
+	$params
+      );
+
+  }
+}
+
+/**
+ * Implements hook_mail().
+ */
+
+function my_module_mail($key, &$message, $params) {
+  switch ($key) {
+    case 'new_publication':
+      $message['subject'] = $params['subject'];
+      $message['body'][] = implode("\n",$params['body']);
+      if (isset($params['Cc'])) $message['headers']['Cc']=implode(' ',$params['Cc']);
+      break;
+  }
+}
+
+/**
+ * Generates the email body HTML with an attached signature.
+ *
+ * @param array $body The email body lines.
+ * @param string $signatureFilePath The path to the PNG signature file.
+ *
+ * @return string The generated email body HTML.
+ */
+function generateEmailBodyWithSignature(array $body, $signatureFilePath) {
+  // Combine the email body lines
+  $emailBody = implode("<br>\n", $body);
+
+  // Add the signature image as an attachment
+  $fileUri = \Drupal::service('file_system')->realpath($signatureFilePath);
+  $fileContents = file_get_contents($fileUri);
+  if ($fileContents !== FALSE) {
+    $base64EncodedImage = base64_encode($fileContents);
+    $signatureHtml = "<br>\n<img src='data:image/png;base64, $base64EncodedImage'>";
+    $emailBody .= $signatureHtml;
+  }
+
+  return $emailBody;
+}
+
+
+function my_module_form_alter(&$form, &$form_state, $form_id) {
+    $user = \Drupal::currentUser();
+    if ($user->hasPermission('administer users')) {
+    	if ($form_id == 'node_form' && isset($form['#node']) && $form['#node']->getType() == 'publication') {
+	        $form['author']['#access'] = TRUE;
+    	}
+    }
+}
+
+/**
+ * Implements hook_menu() to define a custom path for publication report.
+ */
+function my_module_menu() {
+  $items['publications-report'] = array(
+    'title' => 'Publications Report',
+    'page callback' => 'my_module_publications_report',
+    'access arguments' => array('access content'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+
+  return $items;
+}
+
+/**
+ * Callback function for the publications report.
+ */
+function my_module_publications_report() {
+  $build = array();
+
+  // Load all Publication nodes sorted by publication id.
+  $query = \Drupal::entityQuery('node')
+    ->condition('type', 'publication')
+    ->sort('field_publication_id');
+  $nids = $query->execute();
+
+  $nodes = \Drupal::entityTypeManager()->getStorage('node')->loadMultiple($nids);
+
+  $header = array(
+    'Publication ID',
+    'Title',
+    'Author(s)',
+  );
+  $rows = array();
+  foreach ($nodes as $node) {
+    $title = $node->getTitle();
+    $nid = $node->id();
+    $publication_id = $node->get('field_publication_id')->value;
+
+    // Get the corresponding authors.
+    $corresponding_authors = $node->get('field_corresponding_authors')->referencedEntities();
+    $authors = array();
+    foreach ($corresponding_authors as $author) {
+      $authors[] = $author->get('name')->value;
+    }
+    $author_names = implode(', ', $authors);
+
+    // Create a hyperlink to the node.
+    $url = \Drupal\Core\Url::fromRoute('entity.node.canonical', ['node' => $nid])->toString();
+    $title = "<a href='$url'>$title</a>";
+
+    $rows[] = array(
+      'data' => array(
+        $publication_id,
+        $title,
+        $author_names,
+      ),
+    );
+  }
+
+  $build['publications_table'] = array(
+    '#theme' => 'table',
+    '#header' => $header,
+    '#rows' => $rows,
+    '#attributes' => array('id' => 'publications-table'),
+  );
+
+  return $build;
+}
+

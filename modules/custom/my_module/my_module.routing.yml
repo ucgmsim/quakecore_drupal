@@ -1,0 +1,7 @@
+my_module.publication_list:
+  path: '/admin/content/publication_list'
+  defaults:
+    _controller: '\Drupal\my_module\Controller\PublicationController::publicationList'
+    _title: 'Publication List'
+  requirements:
+    _permission: 'access content'
