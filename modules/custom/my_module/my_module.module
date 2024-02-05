@@ -7,6 +7,8 @@ use Drupal\Core\Mail\Plugin\Mail\PhpMail;
 use Drupal\Core\Render\Markup;
 use Drupal\Core\Link;
 use Drupal\Core\Url;
+use Drupal\Core\Form\FormStateInterface;
+use Drupal\node\Entity\Node;
 
 /**
  * Implements hook_ENTITY_TYPE_create() for node entities.
@@ -16,19 +18,19 @@ function my_module_node_create(EntityInterface $entity) {
   if ($entity->bundle() === 'publication') {
     // Set the first value of 'field_corresponding_authors' to the current user's ID if the user is not an admin.
     $user = \Drupal::currentUser();
-    if (!$user->hasPermission('administer users')) {
+   // if (!$user->hasPermission('administer users')) {
       $corresponding_authors = $entity->get('field_corresponding_authors')->getValue();
       if (empty($corresponding_authors)) {
         $entity->set('field_corresponding_authors', [['target_id' => $user->id()]]);
       }
-    }
+//    }
   }
 }
 
 /**
  * Implements hook_form_FORM_ID_alter().
  */
-function my_module_form_node_publication_form_alter(&$form, \Drupal\Core\Form\FormStateInterface $form_state, $form_id) {
+function my_module_form_node_publication_form_alter(&$form, FormStateInterface $form_state, $form_id) {
   // Add a custom validation callback to the publication form.
   $form['#validate'][] = 'my_module_publication_form_validate';
 }
@@ -36,7 +38,7 @@ function my_module_form_node_publication_form_alter(&$form, \Drupal\Core\Form\Fo
 /**
  * Custom validation callback for the publication form.
  */
-function my_module_publication_form_validate($form, \Drupal\Core\Form\FormStateInterface $form_state) {
+function my_module_publication_form_validate($form, FormStateInterface $form_state) {
   $title = $form_state->getValue('title')[0]['value'];
   
   // Check if a publication with a similar title already exists.
@@ -49,7 +51,7 @@ function my_module_publication_form_validate($form, \Drupal\Core\Form\FormStateI
   if (!empty($existing_publication_ids)) {
     $existing_publication_links = [];
     foreach ($existing_publication_ids as $existing_publication_id) {
-      $existing_publication = \Drupal\node\Entity\Node::load($existing_publication_id);
+      $existing_publication = Node::load($existing_publication_id);
       $existing_publication_title = $existing_publication->getTitle();
       $url = Url::fromRoute('entity.node.edit_form', ['node' => $existing_publication_id]);
       $existing_publication_link = Link::fromTextAndUrl(t('@title (ID: @id)', ['@title' => $existing_publication_title, '@id' => $existing_publication_id]), $url);
@@ -238,7 +240,7 @@ function my_module_publications_report() {
     $author_names = implode(', ', $authors);
 
     // Create a hyperlink to the node.
-    $url = \Drupal\Core\Url::fromRoute('entity.node.canonical', ['node' => $nid])->toString();
+    $url = Url::fromRoute('entity.node.canonical', ['node' => $nid])->toString();
     $title = "<a href='$url'>$title</a>";
 
     $rows[] = array(

@@ -14,4 +14,3 @@ routing:
   my_module:
     resource: my_module.routing.yml
 
-
