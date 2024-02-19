@@ -1,7 +1,7 @@
 name: My Module
 type: module
 description: 'Custom module for setting the default value of the "field_publication_id" field.'
-core_version_requirement: ^8 || ^9
+core_version_requirement: ^8 || ^9 || ^10
 package: Custom
 dependencies:
   - node
@@ -13,5 +13,4 @@ core: 8.x
 routing:
   my_module:
     resource: my_module.routing.yml
-
 
