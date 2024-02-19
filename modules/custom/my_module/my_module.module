@@ -45,6 +45,8 @@ function my_module_publication_form_validate($form, FormStateInterface $form_sta
   $query = \Drupal::entityQuery('node')
     ->condition('type', 'publication')
     ->condition('title', '%'.$title.'%', 'LIKE');
+  $query->accessCheck(FALSE); // Set access check to false if access control is not required.
+// Add additional conditions or filters to the query.
   $existing_publication_ids = $query->execute();
 
   // If there are existing publications with similar titles, display a message.
